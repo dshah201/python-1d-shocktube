@@ -1,104 +1,67 @@
-import numpy as np
+"""Run and plot the one-dimensional Sod shock-tube problem."""
+
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 
-left = [1, 1, 0]
-right = [.125, .1, 0]
-gamma = 1.4
-n = 500
-prim = np.zeros((n, 3))
-x = [0] * n
+from shocktube import PrimitiveState, solve
 
-b = 0
-for p in x:
-    if b == 0:
-        x[0] = 1 / (2 * n)
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Solve the 1D Sod shock-tube problem with a Rusanov flux."
+    )
+    parser.add_argument("--cells", type=int, default=500, help="number of grid cells")
+    parser.add_argument("--time", type=float, default=0.2, help="final simulation time")
+    parser.add_argument("--cfl", type=float, default=0.5, help="CFL number")
+    parser.add_argument(
+        "--save",
+        type=Path,
+        metavar="PATH",
+        help="save the plot instead of opening a window",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.save:
+        plt.switch_backend("Agg")
+
+    result = solve(
+        left=PrimitiveState(density=1.0, pressure=1.0, velocity=0.0),
+        right=PrimitiveState(density=0.125, pressure=0.1, velocity=0.0),
+        cells=args.cells,
+        final_time=args.time,
+        cfl=args.cfl,
+    )
+
+    fig, axes = plt.subplots(3, 1, figsize=(8, 8), sharex=True)
+    fields = (
+        ("Density", result.density),
+        ("Velocity", result.velocity),
+        ("Pressure", result.pressure),
+    )
+
+    for axis, (label, values) in zip(axes, fields):
+        axis.plot(result.x, values, linewidth=1.5)
+        axis.set_ylabel(label)
+        axis.grid(alpha=0.25)
+
+    axes[-1].set_xlabel("Position")
+    fig.suptitle(f"Sod shock tube at t = {result.time:.3f}")
+    fig.tight_layout()
+
+    if args.save:
+        args.save.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(args.save, dpi=150)
+        print(f"Saved plot to {args.save}")
     else:
-        x[b] = (1 / n) + x[b - 1]
-    b = b + 1
+        plt.show()
 
-a = 0
-for i in prim:
-    if x[a] < 0.5:
-        i[0] = left[0]
-        i[1] = left[1]
-        i[2] = left[2]
-    else:
-        i[0] = right[0]
-        i[1] = right[1]
-        i[2] = right[2]
-    a = a + 1
 
-# plt.plot(x, prim[:,0])
-# plt.plot(x, prim[:,1])
-# plt.plot(x, prim[:,2])
-
-cons = np.zeros((n, 3))
-c = 0
-for num in cons:
-    if x[c] < .5:
-        num[0] = prim[c][0]
-        num[1] = prim[c][0] * left[2]
-        num[2] = prim[c][0] * (.5 * (left[2] ** 2) + left[1] / ((gamma - 1) * left[0]))
-    else:
-        num[0] = prim[c][0]
-        num[1] = prim[c][0] * right[2]
-        num[2] = prim[c][0] * (.5 * (right[2] ** 2) + right[1] / ((gamma - 1) * right[0]))
-    c = c + 1
-
-cfl = .5
-dx = 1 / n
-t = 0
-time = 0
-
-prim = np.vstack([prim[0], prim, prim[-1]])
-cons = np.vstack([cons[0], cons, cons[-1]])
-
-while time <= .2:
-    prim[-1] = prim[-2]
-    prim[0] = prim[1]
-    cons[-1] = cons[-2]
-    cons[0] = cons[1]
-
-    density = cons[:, 0]
-    u = cons[:, 1] / density
-    pressure = ((gamma - 1) * cons[:, 2] - (gamma - 1) * .5 * density * (u ** 2))
-
-    c = np.sqrt(gamma * pressure / density)
-    t = (cfl * dx) / (np.max(np.abs(u) + c))
-
-    densR = density[1:]
-    uR = u[1:]
-    densL = density[:-1]
-    uL = u[:-1]
-    cL = c[:-1]
-    cR = c[1:]
-    pressureL = pressure[:-1]
-    pressureR = pressure[1:]
-
-    max = np.maximum(np.abs(uL) + cL, np.abs(uR) + cR)
-
-    densflux = .5 * (densR * uR + densL * uL) - .5 * (max) * (densR - densL)
-    cons[1:-1, 0] = cons[1:-1, 0] - t * (-densflux[:-1] + densflux[1:]) / dx
-    momflux = .5 * ((densR * (uR ** 2) + pressureR) + (densL * (uL ** 2) + pressureL)) - .5 * (max) * (
-                densR * uR - densL * uL)
-    cons[1:-1, 1] = cons[1:-1, 1] - t * (-momflux[:-1] + momflux[1:]) / dx
-    energyflux = .5 * ((densR * (.5 * (uR ** 2) + pressureR / ((gamma - 1) * (densR))) * uR + pressureR * uR) + (
-                densL * (.5 * (uL ** 2) + pressureL / ((gamma - 1) * (densL))) * uL + pressureL * uL)) - .5 * (max) * (
-                             (densR * (.5 * (uR ** 2) + pressureR / ((gamma - 1) * (densR)))) - (
-                                 densL * (.5 * (uL ** 2) + pressureL / ((gamma - 1) * (densL)))))
-    cons[1:-1, 2] = cons[1:-1, 2] - t * (-energyflux[:-1] + energyflux[1:]) / dx
-
-    time = time + t
-
-density = cons[:, 0]
-u = cons[:, 1] / density
-pressure = ((gamma - 1) * cons[:, 2] - (gamma - 1) * .5 * density * (u ** 2))
-
-ypoints = density[1:-1]
-plt.plot(x, ypoints)
-
-ypointsu = u[1:-1]
-plt.plot(x, ypointsu)
-
-ypointsp = pressure[1:-1]
-plt.plot(x, ypointsp)
+if __name__ == "__main__":
+    main()
