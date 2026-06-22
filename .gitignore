@@ -191,6 +191,10 @@ cython_debug/
 # Generated simulation output
 output/
 
+# Local AI/editor tooling
+.agents/
+.codex/
+
 # Ruff stuff:
 .ruff_cache/
 
