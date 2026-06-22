@@ -30,6 +30,28 @@ class SimulationResult:
     time: float
 
 
+@dataclass(frozen=True)
+class SimulationHistory:
+    """Primitive variables sampled throughout a simulation."""
+
+    x: Array
+    density: Array
+    velocity: Array
+    pressure: Array
+    times: Array
+
+    @property
+    def final(self) -> SimulationResult:
+        """Return the final frame as a simulation result."""
+        return SimulationResult(
+            self.x,
+            self.density[-1],
+            self.velocity[-1],
+            self.pressure[-1],
+            float(self.times[-1]),
+        )
+
+
 def primitive_to_conserved(state: PrimitiveState, gamma: float) -> Array:
     """Convert a primitive state to density, momentum, and total energy."""
     total_energy = (
@@ -88,6 +110,30 @@ def solve(
     diaphragm_position: float = 0.5,
 ) -> SimulationResult:
     """Solve a shock-tube problem on the unit interval."""
+    return solve_history(
+        left,
+        right,
+        cells=cells,
+        final_time=final_time,
+        cfl=cfl,
+        gamma=gamma,
+        diaphragm_position=diaphragm_position,
+        frames=2,
+    ).final
+
+
+def solve_history(
+    left: PrimitiveState = PrimitiveState(1.0, 1.0, 0.0),
+    right: PrimitiveState = PrimitiveState(0.125, 0.1, 0.0),
+    *,
+    cells: int = 500,
+    final_time: float = 0.2,
+    cfl: float = 0.5,
+    gamma: float = 1.4,
+    diaphragm_position: float = 0.5,
+    frames: int = 100,
+) -> SimulationHistory:
+    """Solve a shock tube and sample its state at evenly spaced times."""
     if cells < 2:
         raise ValueError("cells must be at least 2")
     if final_time < 0:
@@ -98,6 +144,8 @@ def solve(
         raise ValueError("gamma must be greater than 1")
     if not 0 < diaphragm_position < 1:
         raise ValueError("diaphragm_position must be between 0 and 1")
+    if frames < 2:
+        raise ValueError("frames must be at least 2")
 
     dx = 1.0 / cells
     x = (np.arange(cells, dtype=float) + 0.5) * dx
@@ -112,19 +160,41 @@ def solve(
         right_conserved,
     )
 
+    sample_times = np.linspace(0.0, final_time, frames)
+    density_history = np.empty((frames, cells), dtype=float)
+    velocity_history = np.empty((frames, cells), dtype=float)
+    pressure_history = np.empty((frames, cells), dtype=float)
+
+    def record(frame: int) -> None:
+        density, velocity, pressure = conserved_to_primitive(
+            conserved[1:-1], gamma
+        )
+        density_history[frame] = density
+        velocity_history[frame] = velocity
+        pressure_history[frame] = pressure
+
+    record(0)
     time = 0.0
-    while time < final_time:
-        conserved[0] = conserved[1]
-        conserved[-1] = conserved[-2]
+    for frame, target_time in enumerate(sample_times[1:], start=1):
+        while time < target_time:
+            conserved[0] = conserved[1]
+            conserved[-1] = conserved[-2]
 
-        density, velocity, pressure = conserved_to_primitive(conserved, gamma)
-        sound_speed = np.sqrt(gamma * pressure / density)
-        dt = cfl * dx / np.max(np.abs(velocity) + sound_speed)
-        dt = min(dt, final_time - time)
+            density, velocity, pressure = conserved_to_primitive(conserved, gamma)
+            sound_speed = np.sqrt(gamma * pressure / density)
+            dt = cfl * dx / np.max(np.abs(velocity) + sound_speed)
+            dt = min(dt, target_time - time)
 
-        flux = rusanov_flux(conserved, gamma)
-        conserved[1:-1] -= dt / dx * (flux[1:] - flux[:-1])
-        time += dt
+            flux = rusanov_flux(conserved, gamma)
+            conserved[1:-1] -= dt / dx * (flux[1:] - flux[:-1])
+            time += dt
 
-    density, velocity, pressure = conserved_to_primitive(conserved[1:-1], gamma)
-    return SimulationResult(x, density, velocity, pressure, time)
+        record(frame)
+
+    return SimulationHistory(
+        x,
+        density_history,
+        velocity_history,
+        pressure_history,
+        sample_times,
+    )

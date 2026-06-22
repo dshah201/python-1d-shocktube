@@ -7,7 +7,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from shocktube import PrimitiveState, solve
+from shocktube import PrimitiveState, solve, solve_history
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,37 +23,64 @@ def parse_args() -> argparse.Namespace:
         metavar="PATH",
         help="save the plot instead of opening a window",
     )
+    parser.add_argument(
+        "--animate",
+        type=Path,
+        metavar="GIF",
+        help="render the simulation history to an animated GIF",
+    )
+    parser.add_argument(
+        "--frames",
+        type=int,
+        default=90,
+        help="number of animation frames (default: 90)",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=30,
+        help="animation frames per second (default: 30)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.save:
+    if args.save and args.animate:
+        raise SystemExit("Choose either --save or --animate, not both.")
+    if args.fps <= 0:
+        raise SystemExit("--fps must be greater than zero.")
+    if args.save or args.animate:
         plt.switch_backend("Agg")
 
+    left = PrimitiveState(density=1.0, pressure=1.0, velocity=0.0)
+    right = PrimitiveState(density=0.125, pressure=0.1, velocity=0.0)
+
+    if args.animate:
+        from visualization import animate_history
+
+        history = solve_history(
+            left,
+            right,
+            cells=args.cells,
+            final_time=args.time,
+            cfl=args.cfl,
+            frames=args.frames,
+        )
+        animate_history(history, output=args.animate, fps=args.fps)
+        print(f"Saved animation to {args.animate}")
+        return
+
+    from visualization import plot_result
+
     result = solve(
-        left=PrimitiveState(density=1.0, pressure=1.0, velocity=0.0),
-        right=PrimitiveState(density=0.125, pressure=0.1, velocity=0.0),
+        left,
+        right,
         cells=args.cells,
         final_time=args.time,
         cfl=args.cfl,
     )
-
-    fig, axes = plt.subplots(3, 1, figsize=(8, 8), sharex=True)
-    fields = (
-        ("Density", result.density),
-        ("Velocity", result.velocity),
-        ("Pressure", result.pressure),
-    )
-
-    for axis, (label, values) in zip(axes, fields):
-        axis.plot(result.x, values, linewidth=1.5)
-        axis.set_ylabel(label)
-        axis.grid(alpha=0.25)
-
-    axes[-1].set_xlabel("Position")
-    fig.suptitle(f"Sod shock tube at t = {result.time:.3f}")
-    fig.tight_layout()
+    fig = plot_result(result)
 
     if args.save:
         args.save.parent.mkdir(parents=True, exist_ok=True)
